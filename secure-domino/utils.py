@@ -19,21 +19,6 @@ def get_abs_path(rel_path: str, is_dir: bool = False):
     return path
 
 
-def load_pkcs11():
-    libs = {
-        "linux": "/usr/local/lib/libpteidpkcs11.so",
-        "win32": "C:\\Windows\\System32\\pteidpkcs11.dll"
-    }
-
-    lib = libs[sys.platform]
-
-    # load pkcs11
-    pkcs11 = PyKCS11.PyKCS11Lib()
-    pkcs11.load(lib)
-
-    return pkcs11
-
-
 if __name__ == '__main__':
     # Testing if needed
     ...

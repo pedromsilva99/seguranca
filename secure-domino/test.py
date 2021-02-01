@@ -1,48 +1,80 @@
+import socket
 import sys
+import pickle
+import Colors
+import string
+from deck_utils import Player
 import random
+from Crypto.Cipher import AES
+from asym_keys import *
+from ciphers import *
+from cryptography.hazmat.primitives import serialization
 
-from ciphers import encrypt_aes_pycrypto, decrypt_aes_pycrypto
+def pad16Bytes (msg):
+    paddingChars=16-len(msg)%16
+    paddedMsg=msg
+    for i in range(paddingChars):
+        paddedMsg=paddedMsg+b'\0'
+    return paddedMsg
 
-ls = ['a', 'b', 'c',  'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',]
+# Creates a string with 16 bytes padding
+def pad16Str (msg):
+    paddingChars=16-len(str (msg))%16
+    paddedMsg=''.join(['\0' for i in range(paddingChars)])
+    return str (msg)+paddedMsg
 
-def randN():
-    s=""
-    for i in range(0,16):
-        r = random.randint(0,25)
-        s = s + ls[r]
-    return s
+def sendDataPlayer(msg,player_secret):
+    psecret = bytes (pad16Str(str (player_secret)),'utf-8')
+    # encrypton with AES and the message needs to be a multiple of 16
+    new_msg = bytes(msg)
+    iv = 16 * b'\0'
+    aes = AES.new(psecret, AES.MODE_CBC, iv)
+    encd = aes.encrypt(pad16Bytes(new_msg))
+    return encd
+
+def receiveDataPlayer(player_data, player_secret):
+    psecret = bytes (pad16Str(str (player_secret)),'utf-8')
+    while True:
+        #print(msg)
+        iv = 16 * b'\0'
+        aes = AES.new(psecret, AES.MODE_CBC, iv)
+        new_data = aes.decrypt(player_data)
+        list_data = list(bytes(new_data))
+        return list_data
+
+def sendListData(msg,player_secret):
+    psecret = bytes (pad16Str(str (player_secret)),'utf-8')
+    # encrypton with AES and the message needs to be a multiple of 16
+    iv = 16 * b'\0'
+    aes = AES.new(psecret, AES.MODE_CBC, iv)
+    encd = aes.encrypt(pad16Bytes(msg))
+    return encd
+
+def receive_data_cena_fixe(player_data, player_secret):
+    psecret = bytes (pad16Str(str (player_secret)),'utf-8')
+    while True:
+        #print(msg)
+        iv = 16 * b'\0'
+        aes = AES.new(psecret, AES.MODE_CBC, iv)
+        new_data = aes.decrypt(player_data)
+        new_data = new_data.replace(b'\x00', b'')
+        return new_data
+
+pl1 = 15
+
+ls = [b'-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDFZKn1lJvNmXK95FUBGwmZ7rb6\nIxrJj8YNXp0antj6gV7DivIkLTnq6eC2oWH9kOF2FFAeLvxLDCZKEQwuipev/om5\nhat6j4Rj7sGyQxqeYDVoKtYmKtAzpzV/yolPEhOxQ4wTWOarAZm9UU+xX+vabkH4\n3weQYMhqZFTqVcBh+wIDAQAB\n-----END PUBLIC KEY-----\n', b'-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDFZKn1lJvNmXK95FUBGwmZ7rb6\nIxrJj8YNXp0antj6gV7DivIkLTnq6eC2oWH9kOF2FFAeLvxLDCZKEQwuipev/om5\nhat6j4Rj7sGyQxqeYDVoKtYmKtAzpzV/yolPEhOxQ4wTWOarAZm9UU+xX+vabkH4\n3weQYMhqZFTqVcBh+wIDAQAB\n-----END PUBLIC KEY-----\n', b'-----BEGIN PUBLIC KEY-----\nMIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDFZKn1lJvNmXK95FUBGwmZ7rb6\nIxrJj8YNXp0antj6gV7DivIkLTnq6eC2oWH9kOF2FFAeLvxLDCZKEQwuipev/om5\nhat6j4Rj7sGyQxqeYDVoKtYmKtAzpzV/yolPEhOxQ4wTWOarAZm9UU+xX+vabkH4\n3weQYMhqZFTqVcBh+wIDAQAB\n-----END PUBLIC KEY-----\n']
+ls_enc = []
+ls_desenc = []
+
+for i in ls:
+    ls_enc.append(sendListData(i, pl1))
+
+print('Lista encriptada: ' + str(ls_enc))
 
 
-pseu = ["0", "1", "2", "3", "4", "5"]
-aux = ["0", "1", "2", "3", "4", "5"]
-dct_pseu_key = {}
-dct_newpsew_cipher = {}
+# ls_enc = sendDataPlayer(ls, pl1)
+# print(str(ls_enc) + '\n')
+for i in ls_enc:
+    ls_desenc.append(receive_data_cena_fixe(i, pl1))
 
-for l in pseu:
-    dct_pseu_key[l] = randN()
-
-random.shuffle(aux)
-
-for i in pseu:
-    dct_newpsew_cipher[aux.pop()] =  encrypt_aes_pycrypto(i,dct_pseu_key[i])
-
-print(dct_pseu_key)
-
-print("------------------")
-
-print(dct_newpsew_cipher)
-def decodeable(data):
-    try:
-        data = data.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
-for i in dct_pseu_key:
-    decipher = decrypt_aes_pycrypto(dct_pseu_key[i], dct_newpsew_cipher['0'])
-    if decodeable(decipher):
-        print(decipher.decode("utf-8").strip())
-
-# s=randN()
-# temp = encrypt_aes_pycrypto("nao me", s)
-# print(temp)
-# print(decrypt_aes_pycrypto(s,temp))
+print('Lista desencriptada: ' + str(ls_desenc) + '\n')

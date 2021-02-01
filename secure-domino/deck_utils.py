@@ -1,5 +1,6 @@
 import sys
 import random
+import Colors
 from ciphers import encrypt_aes_pycrypto, decrypt_aes_pycrypto
 
 class Player:
@@ -21,18 +22,13 @@ class Player:
         #dicionarios para armazenar a chave valor das cifras do deck
         self.dct_pseu_key = {}
         self.dct_oldcipher_key = {}
+        self.picked_pieces = []
+        self.priv_keys = []
+        self.ls_cipher = []
+        self.real_piece = 0
 
     def __str__(self):
         return str(self.toJson())
-
-    def restartGame(self):
-        self.hand = []
-        self.num_pieces = 0
-        self.max_pieces = 5
-        self.ready_to_play = False
-        self.in_table = []
-        self.deck = []
-        self.nopiece = False
 
     def printPseudonym(self):
         a = ""
@@ -50,9 +46,9 @@ class Player:
         if not self.ready_to_play and self.num_pieces == self.pieces_per_player:
             self.ready_to_play = True
         random.shuffle(self.deck)
-        piece = self.deck.pop()
-        self.insertInHand(piece)
-        return {"action": "get_piece", "deck": self.deck}
+        peca = self.deck.pop()
+        #self.insertInHand(piece)
+        return {"action": "get_piece_from_pseu", "piece": peca}
 
     def updatePieces(self, i):
         self.num_pieces += i
@@ -67,19 +63,35 @@ class Player:
 
     def checkifWin(self):
         print("Winner ", self.num_pieces == 0)
-        return self.num_pieces == 0
+        return self.hand == []
+
+    def piece_in_ls(self, piece, ls):
+        side_to_play1 = piece.values[0].value
+        side_to_play2 = piece.values[1].value
+        for i in ls:
+            side_1 = i.values[0].value
+            side_2 = i.values[1].value
+            if side_1 == side_to_play1 and side_2 == side_to_play2:
+                return True
+            elif side_1 == side_to_play2 and side_2 == side_to_play1:
+                return True
+        return False
 
     def play(self):
         res = {}
         if self.in_table == []:
             print("Empty table")
-            piece = self.hand.pop()
+            piece = self.hand.pop(-1)
             self.updatePieces(-1)
             res = {"action": "play_piece", "piece": piece, "edge": 0, "win": False}
         else:
+            for p in self.hand:
+                if self.piece_in_ls(p, self.in_table):
+                    res = {"action": "play_piece", "warning" : "player is cheating"}
+                    print(Colors.BRed + 'Some player played one of my pieces (' + Colors.Color_Off + str(p).strip() + Colors.BRed + ')' + Colors.Color_Off)
+                    return res
             edges = self.in_table[0].values[0].value, self.in_table[len(
                 self.in_table) - 1].values[1].value
-            print(str(edges[0])+" "+str(edges[1]))
             max = 0
             index = 0
             edge = None
@@ -118,15 +130,28 @@ class Player:
                        "edge": edge, "win": self.checkifWin()}
             # if there is no piece to play try to pick a piece, if there is no piece to pick pass
             else:
-                if len(self.deck) > 0:
-                    res = self.pickPiece()
+                if self.hand == []:
+                    res = {"action": "pass_play", "piece": None,
+                           "edge": edge, "win": self.checkifWin()}
+                    return res
+                elif len(self.deck) > 0:
+                    prob_cheating = random.randint(1, 40)
+                    if prob_cheating == 1:
+                        piece = Piece(str(edges[1]), str(random.randint(0, 6)))
+                        self.real_piece = self.hand.pop(-1)
+                        self.updatePieces(-1)
+                        res = {"action": "play_piece", "piece": piece,
+                               "edge": edge, "win": self.checkifWin()}
+                    else:
+                        res = self.pickPiece()
                 else:
                     res = {"action": "pass_play", "piece": None,
                            "edge": edge, "win": self.checkifWin()}
-            print("To play -> "+str(piece))
+                    return res
+        print("To play -> "+str(piece))
         return res
-    
-    
+
+
     def randN(self):
         ls = ['a', 'b', 'c',  'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm',
               'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',]
@@ -165,12 +190,9 @@ class Player:
         for i in pseu:
             ls_cipher.append(encrypt_aes_pycrypto(i,self.dct_pseu_key[i]))
 
-        #print(dct_pseu_key)
-
-        #print("------------------")
-
-        #print(dct_newpsew_cipher)
         random.shuffle(ls_cipher)
+
+        self.ls_cipher = ls_cipher
 
         return ls_cipher
 
@@ -184,27 +206,22 @@ class Player:
         ls_cipher = []
         for k in ls:
             self.dct_oldcipher_key[k] = self.randN()
-        # print("-----------------------")
-        # print(dct_oldcipher_key)
-        # print("-----------------------")
         for k in self.dct_oldcipher_key:
             ls_cipher.append(encrypt_aes_pycrypto(k,self.dct_oldcipher_key[k]))
 
-        #print(dct_newpsew_cipher)
-
+        self.ls_cipher = ls_cipher
         return ls_cipher
 
 class Piece:
     values = []
     pseudonym = 0
 
-    def __init__(self, first, second, index):
+    def __init__(self, first, second, index=0):
         self.values = [SubPiece(first), SubPiece(second)]
         self.hashed = self.hashh(first, second)
         self.tileIndex = index
 
     def __str__(self):
-        # return " {}".format(str(self.pseudonym))
         return " {}:{}".format(str(self.values[0]), str(self.values[1]))
 
     def printPseudonym(self):
@@ -235,6 +252,10 @@ class Deck:
 
     deck = []
     pseu_deck = []
+    used_tiles = []
+    used_pseu = []
+    total_score = 0
+    aux_pseudonyms = []
 
     def __init__(self, pieces_per_player=5):
         ls_hash = []
@@ -247,25 +268,22 @@ class Deck:
             peca = Piece(piece[0], piece[1], i)
             ls_hash.append(peca.hashed)
             self.deck.append(peca)
-            
+            self.aux_pseudonyms.append(i+1)
+
             i += 1
-        print(ls_hash)
         ls_hash = sorted(ls_hash)
-        print(ls_hash)
 
         for piece in self.deck:
             i = 0
+            self.total_score = self.total_score + int(piece.values[0].value) + int(piece.values[1].value)
             for hashValue in ls_hash:
                 if piece.hashed == hashValue:
                     piece.setPseudonym(i)
                 i = i+1
             self.pseu_deck.append(piece.pseudonym)
-        print(self.deck[1].pseudonym)
-        print(self.deck[1])
         self.npieces = len(self.deck)
         self.pieces_per_player = pieces_per_player
         self.in_table = []
-        print(self.pseu_deck)
 
     def __str__(self):
         a = ""
@@ -279,5 +297,20 @@ class Deck:
             a += str(piece.printPseudonym())
         return a
 
+    def getPieceFromPseu(self, pseu):
+        for i in range(0,len(self.deck)):
+            if self.pseu_deck[i] == pseu:
+                return self.deck[i]
+        return 0
+
+    def removePiece(self, pseu):
+        for l in self.deck:
+            if l.pseudonym == pseu:
+                self.used_tiles.append(l)
+                self.used_pseu.append(pseu)
+                self.deck.remove(l)
+                self.pseu_deck.remove(pseu)
+                break
+
     def toJson(self):
-        return {"npieces": self.npieces, "pieces_per_player": self.pieces_per_player, "in_table": self.in_table, "deck": self.pseu_deck}
+        return {"npieces": self.npieces, "pieces_per_player": self.pieces_per_player, "in_table": self.in_table, "deck": self.pseu_deck, "pseu_deck": self.aux_pseudonyms}

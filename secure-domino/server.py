@@ -9,6 +9,10 @@ import signal
 import Colors
 import time
 from Crypto.Cipher import AES
+from asym_keys import *
+from ciphers import *
+import player_pseudonyms as pp
+pp.flush_game_data()
 
 # Main socket code from https://docs.python.org/3/howto/sockets.html
 # Select with sockets from https://steelkiwi.com/blog/working-tcp-sockets/
@@ -39,8 +43,8 @@ class TableManager:
     # Receive client message
     def receiveMessageFromClient(self,client_socket):
         # receive message
-        msg = client_socket.recv(4096)
-        # get secret 
+        msg = client_socket.recv(8192)
+        # get secret
         secret=self.public_keys[client_socket.getpeername()]
         # decrypt message
         iv = 16 * b'\0'
@@ -50,7 +54,7 @@ class TableManager:
 
     # Send client message in bytes
     def sendMessageClient_Bytes(self,client_socket,msg):
-        # get secret  
+        # get secret
         secret=self.public_keys[client_socket.getpeername()]
         # encrypt message and it needs to be a multiple of 16
         iv = 16 * b'\0'
@@ -82,13 +86,16 @@ class TableManager:
         print('\n--------------------------------------------------------')
         print("Connecting with the cliente from ", addr)
         # negotiate keys with Diffie-Hellman algorithm
-        g = 9
-        p = 1001 
+        g = 11
+        p = 593
         random.seed()
         b = random.randint(10000, 999999)
         B = (g**b) % p
         client_socket.send(bytes(str(B), 'utf-8'))
-        keyClient = client_socket.recv(4096).decode("utf-8")
+        #chave cliente
+        keyClient = client_socket.recv(8192).decode("utf-8")
+        self.players_secrets.append(keyClient)
+        print(self.players_secrets)
         secretServer = (int(keyClient)**b) % p
 
         # secret needs to have 16 characters
@@ -104,7 +111,7 @@ class TableManager:
         else:
             comStatus=self.receiveMessageFromClient(client_socket)
             comStatus=self.removePadding(comStatus)
-            print('Status of client: ', comStatus) 
+            print('Status of client: ', comStatus)
         if (comStatus == "OK"):
             print ('\nConnection established!')
             print('--------------------------------------------------------\n')
@@ -125,8 +132,20 @@ class TableManager:
         # Keys
         self.key_pair = {"private": ..., "public": ...}
         self.public_keys = {}  # Public keys of players: e.g.: {"P1":..., "P2":...}
-
+        self.players_secrets = []
+        #self.tiles_cipher = b''
+        self.adjustPlayer = 1
+        self.rcv_tiles_counter = 0
+        self.rcv_deck_to_decrypt_counter = 0
+        self.counter_to_start_play = 0
         self.nplayers = nplayers
+        self.t_score = 0
+        self.tiles_score = self.game.deck.total_score
+        self.pieces_count = 0
+        self.in_hand_scores = 0
+        self.p_index = 3
+        self.award_counter = 0
+        self.cheating = 0
         print("Nplayers = ", nplayers)
         # disconnecting players when CTRL + C is pressed
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -265,7 +284,7 @@ class TableManager:
                         data2=pickle.loads(data1)
                         msg={"action":"src_dh2_cli2cli","msg":data2["msg"]}
                         break
-                
+
                 return pickle.dumps(msg)
 
             if action == "msg_to_dest_cli2cli":
@@ -291,18 +310,12 @@ class TableManager:
                 nicks=[]
                 for i in range (len(self.game.players)):
                     nicks.append(self.game.players[i].name)
-                msg = {"action": "list_nicks", "msg": nicks}
+                msg = {"action": "list_nicks", "msg": nicks, "skeys":self.players_secrets}
                 self.send_all(msg, sock)
-                return pickle.dumps(msg)
-            
-            if action == "start_game":
-                msg ={"action":"cli2cli"}
                 return pickle.dumps(msg)
 
-            if action == "ready_to_play":
-                msg = {"action": "host_start_game", "msg": Colors.BYellow +
-                       "The Host started the game"+Colors.Color_Off}
-                self.send_all(msg, sock)
+            if action == "start_game":
+                msg ={"action":"cli2cli"}
                 return pickle.dumps(msg)
 
             if action == "get_game_propreties":
@@ -311,44 +324,38 @@ class TableManager:
                 return pickle.dumps(msg)
 
             elif action == "game_ended":
-                print("ENTRA")
                 print(data["score"])
-                for d in data['final_hand']:
-                    self.game.deck.deck.append(d)
                 if len(self.game.scores) == 3:
                     self.game.scores = []
+                    self.pieces_count = 0
                 self.game.scores.append(data["score"])
-                # for d in self.game.scores:
-                #     if d >= 30:
-                #         exit(0)
+                self.pieces_count = self.pieces_count + data["number"]
                 msg = {"action": "get_ready"}
-                # return pickle.dumps(msg)
-                # msg.update(self.game.toJson())
-                # self.send_all(msg, sock)
 
             elif action == "send_scores":
                 msg = {"action": "rcv_game_scores"}
                 msg.update(self.game.toJson())
                 self.send_all(msg, sock)
 
-            elif action == "restart_game":
-                self.game.restartGame()
-                print('Deck Size: ' + str(len(self.game.deck.deck)))
-                # print('Depois do restart' + str(len(self.game.deck.deck)))
-                print(self.game.toJson())
-                # print('DECK F SIZE' + str(len(self.game.deck.deck)))
-                msg = {"action": "host_start_game", "msg": Colors.BYellow +
-                       "The Host started the game"+Colors.Color_Off}
-                self.send_all(msg, sock)
-                return pickle.dumps(msg)
+            if action == "choose_tiles":
+                if self.adjustPlayer == 1:
+                    self.game.previousPlayer()
+                    self.adjustPlayer = 0
 
-            elif action == 'game_over':
-                final_scores = data['score']
-                for fs in final_scores:
-                    print('Score: ' + str(fs))
+            if action == "start_the_play":
+                self.counter_to_start_play += 1
+                if self.counter_to_start_play == 3:
+                    msg = {'action': 'rcv_game_propreties'}
+                    self.game.next_action = "play"
+                    msg.update(self.game.toJson())
+                    self.send_all(msg, sock)
+                else:
+                    msg = {'action': 'wait', "msg":"Wait for everybody to be ready"}
+                    self.send_all(msg, sock)
+
+            if action == "disconnect":
                 msg = {'action': 'disconnect'}
                 self.send_all(msg, sock)
-                # exit(0)
 
 
             player = self.game.currentPlayer()
@@ -361,61 +368,185 @@ class TableManager:
                         msg.update(self.game.toJson())
                         return pickle.dumps(msg)
                     elif self.game.player_index == 1 or self.game.player_index == 2:
-                        print("ENTRA CRLH")
                         msg = {"action": "rcv_cipher_to_encrypt", "cipher": self.game.encr}
                         return pickle.dumps(msg)
-                
+
                 elif action == "deck_encrypted":
                     self.game.encr = data["encrypted_deck"]
                     print(self.game.encr)
                     self.game.nextPlayer()
-                    msg = {"action": "wait", "msg": "acalma os cavalos"}
-
-                if action == "get_piece":
-                    self.game.deck.deck = data["deck"]
-                    if not self.game.started:
-                        player.num_pieces = 5
-                        print("total pieces ", str(28 - len(self.game.deck.deck)))
-                        print("ALL-> ", self.game.allPlayersWithPieces())
-                        self.game.nextPlayer()
-                        if self.game.allPlayersWithPieces():
-                            self.game.started = True
-                            self.game.next_action = "play"
+                    if self.game.player_index == 0 or self.game.player_index == 1:
+                        msg = {"action": "wait", "msg": "Wait for all players to encrypt deck"}
+                        return pickle.dumps(msg)
                     else:
-                        player.updatePieces(1)
-                    msg = {"action": "rcv_game_propreties"}
+                        msg = {"action": "host_start_game", "msg": "Encrypted Deck"}
+                        self.send_all(msg,sock)
+
+                if action == "choose_tiles":
+                    self.game.nextPlayer()
+                    msg = {"action": "rcv_game_propreties", "tiles":data["tiles"], "chosen":data["chosen"]}
                     msg.update(self.game.toJson())
                     self.send_all(msg, sock)
 
+                if action == "receive_tiles":
+                    self.rcv_tiles_counter += 1
+                    print(self.rcv_tiles_counter)
+                    if self.rcv_tiles_counter >= 4:
+                        if self.game.player_index == 2:
+                            msg = {"action": "rcv_game_propreties", "chosen": data["chosen"], 'keys': data['keys']}
+                            self.game.next_action = "decrypt_deck"
+                            if "refresh" in data:
+                                for i in data["refresh"]:
+                                    self.game.deck.aux_pseudonyms.remove(i)
+                            msg.update(self.game.toJson())
+                            self.send_all(msg, sock)
+                        else:
+                            msg = {"action": "wait", "msg": "Wait for all players to receive the tiles"}
+                            self.send_all(msg, sock)
+                    else:
+                        self.game.nextPlayer()
+                        msg = {"action": "rcv_game_propreties", "chosen": data["chosen"]}
+                        if 'keys' in data:
+                            # msg['keys'] = data['keys']
+                            msg = {"action": "rcv_game_propreties", "chosen": data["chosen"], 'keys': data['keys']}
+                        self.game.next_action = "create_tuple"
+                        msg.update(self.game.toJson())
+                        self.send_all(msg, sock)
+
+                if action == "get_deck_to_decrypt":
+                    self.rcv_deck_to_decrypt_counter += 1
+                    if self.rcv_deck_to_decrypt_counter >= 3:
+                        msg = {"action": "wait", "msg": "Wait for all players to decrypt deck"}
+                        self.send_all(msg, sock)
+                    else:
+                        self.game.previousPlayer()
+                        msg = {"action": "rcv_game_propreties", "chosen": data["chosen"], "keys": data["keys"], "counter": self.rcv_deck_to_decrypt_counter}
+                        msg.update(self.game.toJson())
+                        self.send_all(msg, sock)
+
+                if action == "get_piece":
+                    cipher_pieces = []
+                    for i in range(len(data["chosen"])):
+                        piece = self.game.deck.getPieceFromPseu(int(data["chosen"][i]))
+                        pub_key = bytes_to_key(data["keys"][i])
+                        valor_peca = str(piece.values[0].value)+str(piece.values[1].value)
+                        peca_bytes = str.encode(valor_peca)
+                        cipher_text = encrypt_rsa_hazmat(peca_bytes, pub_key)
+                        cipher_pieces.append(cipher_text)
+                        print(peca_bytes)
+                    for i in range(len(data["chosen"])):
+                        self.game.deck.removePiece(int(data["chosen"][i]))
+                    print("deck -> " + ' '.join(map(str, self.game.deck.deck)))
+                    msg = {"action": "rcv_piece", "cipher": cipher_pieces}
+                    self.send_all(msg, sock)
+
+                elif action == "start_the_play":
+                    self.counter_to_start_play+=1
+                    if self.counter_to_start_play == 3:
+                        msg = {'action': 'rcv_game_propreties'}
+                        self.game.next_action = "play"
+                        msg.update(self.game.toJson())
+                        self.send_all(msg, sock)
+
+                    else:
+                        msg = {'action': 'wait', "msg":"Wait for everybody to be ready"}
+                        self.send_all(msg, sock)
+
                 elif action == "play_piece":
                     next_p = self.game.nextPlayer()
+                    if 'warning' in data:
+                        print(Colors.BRed + "One of the players is protesting against cheating!" + Colors.Color_Off)
+                        msg = {'action': 'disconnect'}
+                        for sock in self.inputs:
+                            if sock is not self.server:
+                                self.sendMessageClient_Bytes (sock,pickle.dumps(msg))
+                        print("Disconnecting Server ")
+                        sys.exit(0)
                     if data["piece"] is not None:
                         player.nopiece = False
                         player.updatePieces(-1)
-                        if data["edge"] == 0:
-                            self.game.deck.in_table.insert(0, data["piece"])
-                        else:
-                            self.game.deck.in_table.insert(
-                                len(self.game.deck.in_table), data["piece"])
 
-                    print("player pieces ", player.num_pieces)
-                    print("player "+player.name+" played "+str(data["piece"]))
-                    print("in table -> " + ' '.join(map(str, self.game.deck.in_table)) + "\n")
-                    print("deck -> " + ''.join(map(str, self.game.deck.printPseudonym())) + "\n")
+                        if len(self.game.deck.in_table) > 0:
+                            if self.game.piece_in_ls(data["piece"], self.game.deck.in_table) or self.game.piece_in_ls(data["piece"], self.game.deck.deck):
+                                print(Colors.BRed + "Invalid piece, play again!" + Colors.Color_Off)
+                                print(self.game.next_action)
+                                next_p = self.game.previousPlayer()
+                                self.cheating = 1
+
+                            else:
+                                edges = []
+                                edges.append(self.game.deck.in_table[0].values[0].value)
+                                edges.append(self.game.deck.in_table[-1].values[1].value)
+                                side_to_play1 = data["piece"].values[0].value
+                                side_to_play2 = data["piece"].values[1].value
+                                if side_to_play1 in edges or side_to_play2 in edges:
+                                    print(Colors.BGreen + "Valid Play!!!" + Colors.Color_Off)
+                                    print('Edges ' + ' '.join(edges))
+                                    if data["edge"] == 0:
+                                        self.game.deck.in_table.insert(0, data["piece"])
+                                    else:
+                                        self.game.deck.in_table.insert(
+                                            len(self.game.deck.in_table), data["piece"])
+                        else:
+                            self.game.deck.in_table.insert(0, data["piece"])
+                            print('First piece on the table!')
+
+                    print("Player " + player.name+" played "+str(data["piece"]))
+                    print("In table -> " + ' '.join(map(str, self.game.deck.in_table)) + "\n")
+                    print("Deck -> " + ''.join(map(str, self.game.deck.deck)) + "\n")
                     if data["win"]:
                         if player.checkifWin():
                             print(Colors.BGreen+" WINNER "+player.name+Colors.Color_Off)
                             msg = {"action": "end_game", "winner": player.name}
                     else:
-                        msg = {"action": "rcv_game_propreties"}
+                        if self.cheating == 1:
+                            msg = {'action':'rcv_game_propreties','cheating' : 'true'}
+                            self.cheating = 0
+                        else:
+                            msg = {"action": "rcv_game_propreties"}
                     msg.update(self.game.toJson())
                     self.send_all(msg, sock)
+
+                elif action == "get_piece_from_pseu":
+                    self.p_index = self.game.player_index
+                    self.game.player_index = 2
+                    if self.game.player_index == 2:
+                        msg = {"action": "rcv_game_propreties", "chosen": data["piece"]}
+                        self.game.next_action = "decrypt_tile"
+                        self.game.deck.aux_pseudonyms.remove(int(data["piece"]))
+                        msg.update(self.game.toJson())
+                        self.send_all(msg, sock)
+                    else:
+                        msg = {"action": "wait", "msg": "acalma os cavalos"}
+                        self.send_all(msg, sock)
+
+                elif action == "decrypt_tile":
+                    print(data["tile"])
+                    self.game.previousPlayer()
+                    msg = {"action": "rcv_game_propreties", "chosen": data["tile"],"second": "segundo"}
+                    msg.update(self.game.toJson())
+                    self.send_all(msg, sock)
+
+                elif action == "tile_decrypted":
+                    self.game.player_index = self.p_index
+                    self.game.next_action = "play"
+                    a = int(data["tile"])
+                    print(self.game.deck.pseu_deck)
+                    print(self.game.deck.aux_pseudonyms)
+                    peca = self.game.deck.getPieceFromPseu(a)
+                    self.game.deck.removePiece(a)
+
+                    print(peca)
+                    player.updatePieces(1)
+                    msg = {'action': 'rcv_game_propreties', "piece":peca}
+                    msg.update(self.game.toJson())
+                    self.send_all(msg, sock)
+
                 # no pieces to pick
                 elif action == "pass_play":
                     self.game.nextPlayer()
                     # If the player passed the previous move
                     if player.nopiece:
-                        print("No piece END")
                         msg = {"action": "end_game", "winner": Colors.BYellow+"TIE"+Colors.Color_Off}
                     # Update the variable nopiece so that the server can know if the player has passed the previous move
                     else:
@@ -426,8 +557,62 @@ class TableManager:
 
                     self.send_all(msg, sock)
                     return pickle.dumps(msg)
-                #end of the game
 
+                elif action == 'award':
+                    self.award_counter += 1
+                    if self.award_counter >= 4:
+                        msg = {'action': 'disconnect'}
+                        for sock in self.inputs:
+                            if sock is not self.server:
+                                self.sendMessageClient_Bytes (sock,pickle.dumps(msg))
+                        print("Disconnecting Server ")
+                        sys.exit(0)
+                    else:
+                        score = data['score']
+                        biggest_score = 0
+                        for l in self.game.scores:
+                            if l > biggest_score:
+                                biggest_score = l
+                        print('NAME: ' + str(player.name))
+                        points = biggest_score - score
+                        print('Points: ' + str(points))
+                        pp.award_points(player.name, int(points))
+                        time.sleep(1.0)
+                        self.game.nextPlayer()
+                        msg = {"action": "award_points"}
+                        self.send_all(msg, sock)
+
+                elif action == 'game_over':
+                    final_scores = data['score']
+                    for fs in final_scores:
+                        self.in_hand_scores = self.in_hand_scores + fs
+                        print('Score: ' + str(fs))
+
+                    print("In table -> " + ' '.join(map(str, self.game.deck.in_table)) + "\n")
+                    print("Deck -> " + ''.join(map(str, self.game.deck.deck)) + "\n")
+                    for i in self.game.deck.in_table:
+                        self.t_score = self.t_score + int(i.values[0].value) + int(i.values[1].value)
+                    for k in self.game.deck.deck:
+                        self.t_score = self.t_score + int(k.values[0].value) + int(k.values[1].value)
+                    self.pieces_count = self.pieces_count + len(self.game.deck.in_table) + len(self.game.deck.deck)
+                    # msg = {'action': 'game_over'}
+                    # self.send_all(msg, sock)
+                    if self.pieces_count != 28:
+                        print(Colors.BRed + "Someone played 2 times in a row" + Colors.Color_Off)
+                    else:
+                        if self.in_hand_scores == (self.tiles_score-self.t_score):
+                            print(Colors.BGreen + "GAME ACCOUNTING CORRECT" + Colors.Color_Off)
+                            msg = {'action' : 'award_points'}
+                            self.send_all(msg, sock)
+                        else:
+                            print(Colors.BRed + "Someone is cheating on their score or played a piece from deck!" + Colors.Color_Off)
+                            msg = {'action': 'disconnect'}
+                            for sock in self.inputs:
+                                if sock is not self.server:
+                                    self.sendMessageClient_Bytes (sock,pickle.dumps(msg))
+                            print("Disconnecting Server ")
+                            sys.exit(0)
+                    time.sleep(1.0)
             else:
                 msg = {"action": "wait", "msg": Colors.BRed+"Not Your Turn"+Colors.Color_Off}
             return pickle.dumps(msg)
