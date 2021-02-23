@@ -13,7 +13,7 @@ Diffie Hellman com números primos demasiado pequenos, levando a que os segredos
 
 Não fazemos o Bit Commitment, o que leva a que o jogador não possa confirmar que escolheu realmente aquelas peças. O que não compromete a segurança, pois o último jogador a decifrar e a obter os 15 pseudónimos desconhece as peças e não tirará vantagem nenhuma em alterar os pseudónimos.
 
-Servidor guarda os pontos num ficheiro, mas isso é "impossível" dado que o servidor não terá acesso ao cartão. No entanto, se for o jogador a alterar o ficgeiro pode preencher esse ficheiro da maneira que pretender, o que causa inconsistências, mas o professor disse que não nos devíamos focar nesse aspeto.
+Servidor guarda os pontos num ficheiro, mas isso é "impossível" dado que o servidor não terá acesso ao cartão. No entanto, se for o jogador a alterar o ficheiro pode preencher esse ficheiro da maneira que pretender, o que causa inconsistências, mas o professor disse que não nos devíamos focar nesse aspeto.
 
 Participantes:
 
